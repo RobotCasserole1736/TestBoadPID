@@ -2,12 +2,15 @@ package org.usfirst.frc.team1736.robot;
 
 import org.usfirst.frc.team1736.lib.Calibration.CalWrangler;
 import org.usfirst.frc.team1736.lib.Calibration.Calibration;
+import org.usfirst.frc.team1736.lib.Util.DaBouncer;
 import org.usfirst.frc.team1736.lib.WebServer.CasseroleWebPlots;
 import org.usfirst.frc.team1736.lib.WebServer.CasseroleWebServer;
 
 import com.ctre.CANTalon;
+import com.ctre.CANTalon.FeedbackDevice;
 import com.ctre.CANTalon.TalonControlMode;
 
+import edu.wpi.first.wpilibj.DigitalInput;
 import edu.wpi.first.wpilibj.IterativeRobot;
 import edu.wpi.first.wpilibj.PowerDistributionPanel;
 import edu.wpi.first.wpilibj.Timer;
@@ -84,6 +87,10 @@ public class Robot extends IterativeRobot {
 	double cycleElapsedTime;
 	double cycleStartTime;
 	
+	//Reference motor position at start of cycle
+	double cycleStartPos;
+	
+	DigitalInput cycleStartButton;
 
 	
 
@@ -97,21 +104,25 @@ public class Robot extends IterativeRobot {
 		webServer.startServer();
 		motorCTRL = new CANTalon(0);
 		pdp = new PowerDistributionPanel();
+		cycleStartButton = new DigitalInput(0);
 		
+		motorCTRL.setFeedbackDevice(FeedbackDevice.CtreMagEncoder_Relative); // Tells the SRX the kind of encoder attached to its input.
+		motorCTRL.setProfile(0); // Select slot 0 for PID gains
+
 		ctrlMode = new Calibration("Control Mode", 0,0,2);
 		cycleType = new Calibration("Cycle Type", 0,0,2);
 		cycleLength = new Calibration("Cycle Length S", 5,0,15);
 		cycleAmplititude = new Calibration("Cycle Amplititude", 100,-3000,3000);
 		cycleStepOnPct = new Calibration("Step Cycle On Pct", 75,0,100);
-		cycleSineFrequency = new Calibration("Sine Cycle Frequency Hz", 0,0,2);
+		cycleSineFrequency = new Calibration("Sine Cycle Frequency Hz", 0.5,0,5);
 		
-		posKp = new Calibration("Gain Position P", 0);
+		posKp = new Calibration("Gain Position P", 0.8);
 		posKi = new Calibration("Gain Position I", 0);
-		posKd = new Calibration("Gain Position D", 0);
-		spdKp = new Calibration("Gain Speed P", 0);
-		spdKi = new Calibration("Gain Speed I", 0);
-		spdKd = new Calibration("Gain Speed D", 0);
-		spdKd = new Calibration("Gain Speed F", 0);
+		posKd = new Calibration("Gain Position D", 50);
+		spdKp = new Calibration("Gain Speed P", 1.2);
+		spdKi = new Calibration("Gain Speed I", 0.005);
+		spdKd = new Calibration("Gain Speed D", 0.3);
+		spdKf = new Calibration("Gain Speed F", 0.08);
 		curKp = new Calibration("Gain Current P", 0);
 		curKi = new Calibration("Gain Current I", 0);
 		curKd = new Calibration("Gain Current D", 0);
@@ -119,10 +130,11 @@ public class Robot extends IterativeRobot {
 
 		CalWrangler.loadCalValues();
 		
-		CasseroleWebPlots.addNewSignal("Motor Desired", "varies");
+		CasseroleWebPlots.addNewSignal("Motor Speed Desired", "RPM");
+		CasseroleWebPlots.addNewSignal("Motor Speed Actual", "RPM");
 		
-		CasseroleWebPlots.addNewSignal("Motor Speed", "RPM");
-		CasseroleWebPlots.addNewSignal("Motor Pos", "Deg");
+		CasseroleWebPlots.addNewSignal("Motor Pos Desired", "Deg");
+		CasseroleWebPlots.addNewSignal("Motor Pos Actual", "Deg");
 		
 		CasseroleWebPlots.addNewSignal("Motor Voltage", "V");
 		CasseroleWebPlots.addNewSignal("Motor Current", "A");
@@ -154,26 +166,9 @@ public class Robot extends IterativeRobot {
 	 */
 	@Override
 	public void disabledPeriodic(){
-		
+		//Nothing to do yet?
 	}
 
-	/**
-	 * This function is run when the robot enters Autonomous
-	 */
-	@Override
-	public void autonomousInit() {
-		shutOffMotor();
-		//Do Nothing
-		
-	}
-
-	/**
-	 * This function is called periodically during autonomous
-	 */
-	@Override
-	public void autonomousPeriodic() {
-		//Do Nothing
-	}
 	
 	/**
 	 * This function is run when the robot enters Teleop
@@ -195,7 +190,7 @@ public class Robot extends IterativeRobot {
 
 		//Process user button to find rising edges
 		boolean button_rising_edge = false;
-		boolean cur_button_state = Utility.getUserButton();
+		boolean cur_button_state = Utility.getUserButton() || !cycleStartButton.get();
 		if(cur_button_state == true & userButtonPrev == false){
 			button_rising_edge = true;
 		}
@@ -233,6 +228,8 @@ public class Robot extends IterativeRobot {
 			
 			cycleStartTime = Timer.getFPGATimestamp();
 			
+			motorCTRL.setEncPosition(0);
+			
 		}
 
 		
@@ -249,7 +246,7 @@ public class Robot extends IterativeRobot {
 					motorDesired = cycleAmplititude.get();
 				}
 			} else if(cycleType.get() == 2) {
-				//tbd - sine wave
+				motorDesired = cycleAmplititude.get() * Math.sin(2*Math.PI*cycleElapsedTime*cycleSineFrequency.get());
 			} else {
 				shutOffMotor();
 			}
@@ -259,12 +256,23 @@ public class Robot extends IterativeRobot {
 				cycleActive = false;
 			}
 			
+			//Update motor command
+			if(presentCtrlMode == 0){
+				motorCTRL.set(motorDesired); //if open loop, we must use "set"
+			} else if (presentCtrlMode == 2){
+				motorCTRL.set(motorDesired/360.0); //if in position, we must scale setpoint to go from deg to rotations
+			} else {
+				motorCTRL.setSetpoint(motorDesired);
+			}
+			
+			
 			
 			//Update data plots
 			double timeNow = Timer.getFPGATimestamp();
-			CasseroleWebPlots.addSample("Motor Desired", timeNow, motorDesired);
-			CasseroleWebPlots.addSample("Motor Speed",  timeNow, motorCTRL.getSpeed());
-			CasseroleWebPlots.addSample("Motor Pos",   timeNow, motorCTRL.getPosition());
+			CasseroleWebPlots.addSample("Motor Speed Desired", timeNow, motorDesired); //hacky, may be wrong if plotted in the wrong mode.
+			CasseroleWebPlots.addSample("Motor Speed Actual",  timeNow, motorCTRL.getSpeed());
+			CasseroleWebPlots.addSample("Motor Pos Desired",   timeNow, motorDesired); //hacky, may be wrong if plotted in the wrong mode.
+			CasseroleWebPlots.addSample("Motor Pos Actual",   timeNow, motorCTRL.getPosition()*360);
 			CasseroleWebPlots.addSample("Motor Voltage",timeNow,motorCTRL.getOutputVoltage());
 			CasseroleWebPlots.addSample("Motor Current",timeNow,motorCTRL.getOutputCurrent());
 			CasseroleWebPlots.addSample("PDP Voltage",timeNow, pdp.getVoltage());
