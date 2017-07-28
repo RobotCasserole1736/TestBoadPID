@@ -9,6 +9,7 @@ import org.usfirst.frc.team1736.lib.WebServer.CasseroleWebServer;
 import com.ctre.CANTalon;
 import com.ctre.CANTalon.FeedbackDevice;
 import com.ctre.CANTalon.TalonControlMode;
+import com.ctre.CanTalonJNI.param_t;
 
 import edu.wpi.first.wpilibj.DigitalInput;
 import edu.wpi.first.wpilibj.IterativeRobot;
@@ -59,6 +60,7 @@ public class Robot extends IterativeRobot {
 	Calibration posKp;
 	Calibration posKi;
 	Calibration posKd;
+	Calibration posIdisableErr;
 
 	//Gains for speed mode
 	Calibration spdKp;
@@ -127,6 +129,8 @@ public class Robot extends IterativeRobot {
 		curKi = new Calibration("Gain Current I", 0);
 		curKd = new Calibration("Gain Current D", 0);
 		curKf = new Calibration("Gain Current F", 0);
+		
+		posIdisableErr = new Calibration("Position Error for I Disable", 1000, 0, 30000);
 
 		CalWrangler.loadCalValues();
 		
@@ -260,6 +264,9 @@ public class Robot extends IterativeRobot {
 			if(presentCtrlMode == 0){
 				motorCTRL.set(motorDesired); //if open loop, we must use "set"
 			} else if (presentCtrlMode == 2){
+				if(Math.abs(motorCTRL.getClosedLoopError()) > 45.0){
+					motorCTRL.setParameter(param_t.ePidIaccum, 0); //reset accum if error too high
+				}
 				motorCTRL.set(motorDesired/360.0); //if in position, we must scale setpoint to go from deg to rotations
 			} else {
 				motorCTRL.setSetpoint(motorDesired);
@@ -313,21 +320,25 @@ public class Robot extends IterativeRobot {
 			motorCTRL.setI(spdKi.get());
 			motorCTRL.setD(spdKd.get());
 			motorCTRL.setF(spdKf.get());
+			motorCTRL.setIZone(0);
 		} else if (presentCtrlMode == 2) {
 			motorCTRL.setP(posKp.get());
 			motorCTRL.setI(posKi.get());
 			motorCTRL.setD(posKd.get());
 			motorCTRL.setF(0);
+			motorCTRL.setIZone((int)Math.round(posIdisableErr.get()));
 		} else if (presentCtrlMode == 3){
 			motorCTRL.setP(curKp.get());
 			motorCTRL.setI(curKi.get());
 			motorCTRL.setD(curKd.get());
 			motorCTRL.setF(curKf.get());
+			motorCTRL.setIZone(0);
 		} else {
 			motorCTRL.setP(0);
 			motorCTRL.setI(0);
 			motorCTRL.setD(0);
 			motorCTRL.setF(0);
+			motorCTRL.setIZone(0);
 		}
 	}
 
